@@ -2,7 +2,7 @@ use chrono;
 use serde_json::Value;
 use youtube_dl::YoutubeDl;
 
-// TODO: add like scraping
+// TODO: add like scraping; needs OAuth2.0
 
 fn get_saved_video_list(file_exists: bool, filepath: String) -> Vec<String> {
     if file_exists {
@@ -15,12 +15,14 @@ fn get_saved_video_list(file_exists: bool, filepath: String) -> Vec<String> {
     }
 }
 
-fn get_video_list(playlist_id: String) -> Vec<String> {
+fn get_video_list(playlist_id: String, api_key: String) -> Vec<String> {
     let agent = ureq::agent();
-    let playlist_url =
-        "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=".to_owned()
-            + &playlist_id
-            + "&maxResults=1";
+    let playlist_url = format!(
+        "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId={}&key={}&maxResults=1",
+        playlist_id,
+        api_key
+    );
+
     let response = agent
         .get(&playlist_url)
         .call()
@@ -71,23 +73,14 @@ fn get_video_list(playlist_id: String) -> Vec<String> {
 }
 
 pub fn run_ytdl() {
-    let user_playlist_id = "{PlaylistID}&key={YOUR_API_KEY}"; // fill in yours here
 
-    let path = match std::env::var("FILEPATH") {
-        Ok(path) => path,
-        Err(_error) => "./".to_owned(),
-    };
+    let api_key = std::env::var("YT_API_KEY").expect("An API key is required for this program to run.").to_owned();
+    let playlist_id = std::env::var("PLAYLIST_ID").expect("A playlist to be tracked is required.").to_owned();
+    let folder_path = std::env::var("FILEPATH").unwrap_or(".".to_string());
 
-    let playlist_id = match std::env::var("ID") {
-        Ok(playlist_id) => playlist_id,
-        Err(_error) => user_playlist_id.to_owned(),
-    };
-
-    let filename = "playlist.txt";
-    let filepath = &(path.to_owned() + filename);
-
-    let file_exists = std::path::Path::new(filepath).exists();
-    let video_ids: Vec<String> = get_video_list(playlist_id);
+    let filepath = format!("{}/{}", folder_path, "playlist.txt");
+    let file_exists = std::path::Path::new(&filepath).exists();
+    let video_ids: Vec<String> = get_video_list(playlist_id, api_key);
     let prev_update = get_saved_video_list(file_exists, filepath.to_string());
 
     let differences: Vec<String> = video_ids
@@ -105,15 +98,14 @@ pub fn run_ytdl() {
     } else {
         // download differences
         println!("Changes detected - {}", chrono::Utc::now());
-        println!("found {} videos", differences.len());
+        println!("found {} video(s)", differences.len());
         for video_id in differences {
-            let video_link =
-                "https://www.youtube.com/watch?v=".to_owned() + &video_id.replace("\"", "");
+            let video_link = format!("https://www.youtube.com/watch?v={}", video_id.replace("\"", ""));
             let query_run_result = YoutubeDl::new(video_link)
                 .socket_timeout("15")
                 .download(true)
                 .format("m4a")
-                .output_directory(path.clone() + "downloads/")
+                .output_directory(format!("{}/downloads/", folder_path))
                 .run();
 
             match query_run_result {

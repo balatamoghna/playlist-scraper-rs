@@ -2,30 +2,29 @@ mod yt_downloader;
 
 use actix_files::NamedFile;
 use actix_web::{get, App, HttpRequest, HttpResponse, HttpServer, Responder, Result};
+use std::env;
 
-/*
-fn main() {
-    println!(
-        "A simple scraping bot to check for updates in Youtube Playlist.\nThank you for using!"
-    );
-    //yt_downloader::run_ytdl();
-}
-*/
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    println!("A simple scraping REST API to save a Youtube playlist.\nThank you for using!");
-
-    HttpServer::new(|| {
-        App::new()
-            .service(test_file)
-            .service(list_files)
-            .service(len)
-            .service(download)
-            .service(forcedl)
-    })
-    .bind(("0.0.0.0", 8080))?
-    .run()
-    .await
+    let args: Vec<String> = env::args().collect();
+    if args.contains(&String::from("--server")) {
+        println!("A simple scraping REST API to save a Youtube playlist.\nThank you for using!");
+        HttpServer::new(|| {
+            App::new()
+                .service(test_file)
+                .service(list_files)
+                .service(len)
+                .service(download)
+                .service(forcedl)
+        })
+        .bind(("127.0.0.1", 8080))?
+        .run()
+        .await
+    } else {
+        println!("Checking playlist for differences...");
+        yt_downloader::run_ytdl();
+        Ok({})
+    }
 }
 
 #[get("/test")]
