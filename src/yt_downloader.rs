@@ -2,21 +2,20 @@ use chrono;
 use serde_json::Value;
 use youtube_dl::YoutubeDl;
 
-pub fn run_ytdl() {
-    let user_playlist_id = "{PlaylistID}&key={YOUR_API_KEY}";
+// TODO: add like scraping
 
-    let path = match std::env::var("FILEPATH") {
-        Ok(path) => path,
-        Err(_error) => "./".to_owned(),
-    };
+fn get_saved_video_list(file_exists: bool, filepath: String) -> Vec<String> {
+    if file_exists {
+        let prev_text = std::fs::read_to_string(&filepath).unwrap();
+        let mut prev_update: Vec<String> = prev_text.split(",").map(String::from).collect();
+        prev_update.dedup();
+        prev_update
+    } else {
+        Vec::new()
+    }
+}
 
-    let playlist_id = match std::env::var("ID") {
-        Ok(playlist_id) => playlist_id,
-        Err(_error) => user_playlist_id.to_owned(),
-    };
-
-    let filename = "playlist.txt";
-    let filepath = &(path.to_owned() + filename);
+fn get_video_list(playlist_id: String) -> Vec<String> {
     let agent = ureq::agent();
     let playlist_url =
         "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=".to_owned()
@@ -27,17 +26,14 @@ pub fn run_ytdl() {
         .call()
         .expect("Invalid http response");
     let response_text = response.into_string().expect("Failed to get response text");
-    let file_exists = std::path::Path::new(filepath).exists();
-
-    //Fundamentally wrong way of doing things. Change to push to vec and re-get next page
 
     let mut final_result_vec: Vec<String> = Vec::new();
     let mut latest_updates =
         serde_json::from_str::<Value>(&response_text.trim()).expect("Failed to parse JSON");
 
-    let playlist_elements = latest_updates["items"].as_array().unwrap().len();
+    let playlist_length = latest_updates["items"].as_array().unwrap().len();
 
-    for index in 0..playlist_elements {
+    for index in 0..playlist_length {
         final_result_vec
             .push(latest_updates["items"][index]["snippet"]["resourceId"]["videoId"].to_string());
     }
@@ -70,52 +66,65 @@ pub fn run_ytdl() {
         }
         final_result_vec.dedup();
     }
-    let mut changed_vec: Vec<String> = final_result_vec.clone();
-    if file_exists {
-        let prev_text = std::fs::read_to_string(&filepath).unwrap();
-        let mut prev_update: Vec<&str> = prev_text.split(",").collect::<Vec<&str>>();
 
-        prev_update.dedup();
+    final_result_vec
+}
 
-        changed_vec = final_result_vec
-            .clone()
-            .into_iter()
-            .partition(|x| prev_update.contains(&x.as_str()))
-            .1;
+pub fn run_ytdl() {
+    let user_playlist_id = "{PlaylistID}&key={YOUR_API_KEY}"; // fill in yours here
 
-        std::fs::write(filepath, &final_result_vec.join(",")).expect("Unable to write file");
-    } else {
-        std::fs::write(filepath, &final_result_vec.join(",")).expect("Unable to write file");
-    }
-
-    let flag = if file_exists {
-        if changed_vec.is_empty() {
-            println!("No changes detected - {}", chrono::Utc::now());
-            false
-        } else {
-            println!("Changes detected - {}", chrono::Utc::now());
-            true
-        }
-    } else {
-        true
+    let path = match std::env::var("FILEPATH") {
+        Ok(path) => path,
+        Err(_error) => "./".to_owned(),
     };
 
-    if flag {
-        for index in changed_vec {
+    let playlist_id = match std::env::var("ID") {
+        Ok(playlist_id) => playlist_id,
+        Err(_error) => user_playlist_id.to_owned(),
+    };
+
+    let filename = "playlist.txt";
+    let filepath = &(path.to_owned() + filename);
+
+    let file_exists = std::path::Path::new(filepath).exists();
+    let video_ids: Vec<String> = get_video_list(playlist_id);
+    let prev_update = get_saved_video_list(file_exists, filepath.to_string());
+
+    let differences: Vec<String> = video_ids
+        .clone()
+        .into_iter()
+        .partition(|x| prev_update.contains(x))
+        .1;
+
+    // write playlist back to file
+    std::fs::write(filepath, &video_ids.join(",")).expect("Unable to write file");
+
+    if differences.is_empty() {
+        // do nothing
+        println!("No changes detected - {}", chrono::Utc::now());
+    } else {
+        // download differences
+        println!("Changes detected - {}", chrono::Utc::now());
+        println!("found {} videos", differences.len());
+        for video_id in differences {
             let video_link =
-                "https://www.youtube.com/watch?v=".to_owned() + &index.replace("\"", "");
-            let output = YoutubeDl::new(video_link)
-                .youtube_dl_path(path.clone() + "yt-dlp.exe")
+                "https://www.youtube.com/watch?v=".to_owned() + &video_id.replace("\"", "");
+            let query_run_result = YoutubeDl::new(video_link)
                 .socket_timeout("15")
                 .download(true)
+                .format("m4a")
                 .output_directory(path.clone() + "downloads/")
-                .run()
-                .unwrap()
-                .into_single_video()
-                .unwrap()
-                .title;
+                .run();
 
-            println!("{}", output);
+            match query_run_result {
+                Ok(result) => {
+                    let title = result.into_single_video().unwrap().title;
+                    println!("{}", title);
+                }
+                Err(e) => {
+                    println!("{:?}", e)
+                }
+            }
         }
     }
 }
